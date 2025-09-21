@@ -7,12 +7,13 @@ from tqdm import tqdm
 
 
 N = 4  # number of mice
-MAX_TURNS = 50
+MAX_TURNS = 100
 MEM = 10  # mouse memory length (in turns)
 MUTATION_PROB = 0.1  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
+GIVE_MIN, GIVE_MAX = 0, 4
 
-N_ACTIONS = 1  # the length of action lists
+N_ACTIONS = 2  # the length of action lists
 
 type Cheese = Literal["parmesan", "gouda"]
 
@@ -29,16 +30,52 @@ class ForageSpecialized:
 
 @dataclass
 class Give:
-    amount: dict[Cheese, int]
+    items: dict[Cheese, int]
 
 
 @dataclass
 class Deal:
     me: "Action"
     you: "Action"
+    done: bool = False
 
 
-type Action = Forage | ForageSpecialized | Give | Deal
+@dataclass
+class AnyDeal:
+    pass
+
+
+type Action = Forage | ForageSpecialized | Give | Deal | AnyDeal
+
+
+def flip_deal(deal: Deal) -> Deal:
+    return Deal(me=deal.you, you=deal.me, done=deal.done)
+
+
+def match_deals(a1: Action, a2: Action) -> tuple[Deal, Deal] | None:
+    """Check if the given two actions are matching deals.
+    If so, return their concrete versions. E.g. that means that if given
+    Deal(a, b) and AnyDeal then return (Deal(a, b), Deal(b, a)).
+    """
+    match a1:
+        case Deal(me1, you1, done=False):
+            match a2:
+                case Deal(me2, you2, done=False):
+                    return (a1, a2) if (me1 == you2 and me2 == you1) else None
+                case AnyDeal():
+                    return (a1, flip_deal(a1))
+                case _:
+                    return None
+        case AnyDeal():
+            match a2:
+                case Deal(me2, you2, done=False):
+                    return (flip_deal(a2), a2)
+                case AnyDeal():
+                    return None
+                case _:
+                    return None
+        case _:
+            return None
 
 
 @dataclass
@@ -50,9 +87,21 @@ class MouseMemCell:
 random_action_pool: list[type[Action]] = [
     Forage,
     ForageSpecialized,
-    # DealAction(name="propose"),
-    # Action(name="accept-any"),
+    Deal,
+    AnyDeal,
 ]
+
+
+deal_random_action_pool: list[type[Action]] = [
+    Give
+]
+
+
+@dataclass
+class TurnState:
+    memories: list[list[MouseMemCell]]
+    actions: list[list[Action]]
+    inventories: list[dict[Cheese, int]]
 
 
 def create_random_action() -> Action:
@@ -62,8 +111,28 @@ def create_random_action() -> Action:
     elif action_type is ForageSpecialized:
         cheese: Cheese = random.choice(["parmesan", "gouda"])
         return ForageSpecialized(cheese=cheese)
+    elif action_type is Deal:
+        return Deal(
+            me=create_random_deal_action(),
+            you=create_random_deal_action()
+        )
+    elif action_type is AnyDeal:
+        return AnyDeal()
     else:
         raise NotImplementedError(f"Action type {action_type} not implemented")
+
+
+def create_random_deal_action() -> Action:
+    action_type = random.choice(deal_random_action_pool)
+    if action_type is Give:
+        return Give({
+            "parmesan": random.randint(GIVE_MIN, GIVE_MAX),
+            "gouda": random.randint(GIVE_MIN, GIVE_MAX)
+        })
+    else:
+        raise NotImplementedError(
+            f"Deal action type {action_type} not implemented"
+        )
 
 
 def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
@@ -95,32 +164,58 @@ def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
 
 
 def perform_action(
+    mouse: int,
     action: Action,
-    inventory: dict[Cheese, int],
-    done_actions: list[Action]
-) -> dict[Cheese, int]:
-    gain: dict[Cheese, int]
+    state: TurnState,
+    action_idx: int | None = None,
+    target_mouse: int | None = None,  # The target for e.g. the Give action
+):
+    inventory = state.inventories[mouse]
+    done_actions = state.actions[mouse][:action_idx] if action_idx else []
+
+    def contains_forage(actions: list[Action]) -> bool:
+        return any(
+            isinstance(a, Forage) or isinstance(a, ForageSpecialized)
+            for a in actions
+        )
+
     match action:
         case Forage():
-            gain = (
-                {"parmesan": 1, "gouda": 1}
-                if action not in done_actions  # forage only once per turn
-                else {}
-            )
+            if not contains_forage(done_actions):  # forage only once per turn
+                inventory["parmesan"] += 1
+                inventory["gouda"] += 1
+
         case ForageSpecialized(cheese):
-            gain = (
-                {cheese: 4}
-                if action not in done_actions  # forage only once per turn
-                else {}
-            )
+            if not contains_forage(done_actions):  # forage only once per turn
+                inventory[cheese] += 4
+
+        case Deal(_, _, done=False) | AnyDeal():
+            if action_idx is not None:  # Deal requires an action_idx
+                for other_mouse in range(N):
+                    other_mouse_action = state.actions[other_mouse][action_idx]
+                    deals = match_deals(action, other_mouse_action)
+                    if deals is not None:  # not None means a match
+                        perform_action(
+                            mouse, deals[0], state, target_mouse=other_mouse
+                        )
+                        deals[0].done = True
+                        state.actions[mouse][action_idx] = deals[0]
+                        perform_action(
+                            other_mouse, deals[1], state, target_mouse=mouse
+                        )
+                        deals[1].done = True
+                        state.actions[other_mouse][action_idx] = deals[1]
+                        break
+
+        case Give(items):
+            if target_mouse is not None:  # Give requires a target mouse
+                target_mouse_inventory = state.inventories[target_mouse]
+                for cheese, amount in items.items():
+                    inventory[cheese] -= amount
+                    target_mouse_inventory[cheese] += amount
+
         case _:
-            raise NotImplementedError(f"Action {action} not implemented")
-    
-    # update inventory
-    for cheese, amount in gain.items():
-        inventory[cheese] = inventory.get(cheese, 0) + amount
-    
-    return inventory
+            pass  # Do nothing
 
 
 def calculate_reward(inventory: dict[Cheese, int]) -> float:
@@ -140,17 +235,17 @@ def main() -> None:
     for turn in tqdm(range(MAX_TURNS)):
         # pick actions (needs to be done beforehand for deal actions)
         actions = [pick_action_list(memories[mouse]) for mouse in range(N)]
-        inventories: list[dict[Cheese, int]] = [dict() for _ in range(N)]
+        inventories: list[dict[Cheese, int]] = [
+            {"parmesan": 0, "gouda": 0} for _ in range(N)
+        ]
+        state = TurnState(memories, actions, inventories)
 
         # perform actions
+        # -> start with first action for all mice, then second action, etc.
         for i in range(N_ACTIONS):
             for mouse in np.random.permutation(N):
-                # perform action (update inventory)
                 action = actions[mouse][i]
-                inventory = inventories[mouse]
-                inventories[mouse] = perform_action(
-                    action, inventory, actions[mouse][:i]
-                )
+                perform_action(mouse, action, state, action_idx=i)
 
         # calculate reward
         for mouse in range(N):
