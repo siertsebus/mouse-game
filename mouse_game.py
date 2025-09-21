@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import random
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 from tqdm import tqdm
@@ -9,7 +9,10 @@ from tqdm import tqdm
 N = 4  # number of mice
 MAX_TURNS = 50
 MEM = 10  # mouse memory length (in turns)
-RANDOM_ACTION_PROB = 0.1  # probability of picking a random action instead of from memory
+MUTATION_PROB = 0.1  # probability of mutating an action
+RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
+
+N_ACTIONS = 1  # the length of action lists
 
 type Cheese = Literal["parmesan", "gouda"]
 
@@ -25,22 +28,22 @@ class ForageSpecialized:
 
 
 @dataclass
-class Exchange:
-    give: dict[Cheese, int]
-    receive: dict[Cheese, int]
+class Give:
+    amount: dict[Cheese, int]
 
 
 @dataclass
-class DealAction:
-    exchange: Exchange | None = None
+class Deal:
+    me: "Action"
+    you: "Action"
 
 
-type Action = Forage | ForageSpecialized | DealAction
+type Action = Forage | ForageSpecialized | Give | Deal
 
 
 @dataclass
 class MouseMemCell:
-    action: Action
+    actions: list[Action]
     reward: float
 
 
@@ -63,34 +66,61 @@ def create_random_action() -> Action:
         raise NotImplementedError(f"Action type {action_type} not implemented")
 
 
-def pick_action(memory: list[MouseMemCell]) -> Action:
+def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
     """
-    Pick past action with probability proportional to its reward.
-    There is also a small chance to pick a random action.
-    If memory is not completely filled yet, always pick a random action.
+    Pick a past action list with probability proportional to its reward.
+    There is a small chance of mutating the action list slightly.
+    There is also a small chance to pick a completely random action list.
+    If memory is not completely filled yet, always pick a random action list.
     """
-    if len(memory) < MEM:
-        return create_random_action()
+    if len(memory) < MEM or np.random.rand() < RANDOM_ACTION_PROB:
+        return [create_random_action() for _ in range(N_ACTIONS)]
 
+    # pick an action list from memory
     rewards = np.array([cell.reward for cell in memory])
     probabilities = rewards / rewards.sum()
-    if np.random.rand() < RANDOM_ACTION_PROB:
-        return create_random_action()
-    else:
-        return np.random.choice(
-            np.array([cell.action for cell in memory]),
-            p=probabilities
-        )
+    chosen = random.choices(
+        [cell.actions for cell in memory],
+        weights=probabilities,
+        k=1
+    )[0]
+
+    # mutate with some probability
+    if np.random.rand() < MUTATION_PROB:
+        chosen = cast(list[Action], chosen.copy())
+        mutation_index = np.random.randint(len(chosen))
+        chosen[mutation_index] = create_random_action()
+
+    return chosen
 
 
-def perform_action(action: Action) -> dict[Cheese, int]:
+def perform_action(
+    action: Action,
+    inventory: dict[Cheese, int],
+    done_actions: list[Action]
+) -> dict[Cheese, int]:
+    gain: dict[Cheese, int]
     match action:
         case Forage():
-            return {"parmesan": 1, "gouda": 1}
+            gain = (
+                {"parmesan": 1, "gouda": 1}
+                if action not in done_actions  # forage only once per turn
+                else {}
+            )
         case ForageSpecialized(cheese):
-            return {cheese: 4}
+            gain = (
+                {cheese: 4}
+                if action not in done_actions  # forage only once per turn
+                else {}
+            )
         case _:
             raise NotImplementedError(f"Action {action} not implemented")
+    
+    # update inventory
+    for cheese, amount in gain.items():
+        inventory[cheese] = inventory.get(cheese, 0) + amount
+    
+    return inventory
 
 
 def calculate_reward(inventory: dict[Cheese, int]) -> float:
@@ -109,28 +139,32 @@ def main() -> None:
 
     for turn in tqdm(range(MAX_TURNS)):
         # pick actions (needs to be done beforehand for deal actions)
-        actions = [pick_action(memories[mouse]) for mouse in range(N)]
+        actions = [pick_action_list(memories[mouse]) for mouse in range(N)]
+        inventories: list[dict[Cheese, int]] = [dict() for _ in range(N)]
 
         # perform actions
-        for mouse in np.random.permutation(N):
-            # perform action (update inventory)
-            action = actions[mouse]
-            inventory = perform_action(action)
+        for i in range(N_ACTIONS):
+            for mouse in np.random.permutation(N):
+                # perform action (update inventory)
+                action = actions[mouse][i]
+                inventory = inventories[mouse]
+                inventories[mouse] = perform_action(
+                    action, inventory, actions[mouse][:i]
+                )
 
-            # calculate reward
-            reward = calculate_reward(inventory)
+        # calculate reward
+        for mouse in range(N):
+            reward = calculate_reward(inventories[mouse])
 
             # update memory
             memory = memories[mouse]
-            memory.append(MouseMemCell(action, reward))
-            if len(memory) > MEM:
+            memory.append(MouseMemCell(actions[mouse], reward))
+            if len(memory) > MEM:  # keep memory size constant
                 memory.pop(0)
-
-            pass
 
         print(
             f"Turn {turn}: "
-            f"{[(mem[-1].action, mem[-1].reward)
+            f"{[(mem[-1].actions, mem[-1].reward)
                 for mem in memories if mem]}"
         )
 
