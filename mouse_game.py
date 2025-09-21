@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 import random
 from typing import Literal, cast
 
@@ -6,16 +7,18 @@ import numpy as np
 from tqdm import tqdm
 
 
-N = 4  # number of mice
-MAX_TURNS = 100
-MEM = 10  # mouse memory length (in turns)
+N = 100  # number of mice
+MAX_TURNS = 10000
+MEM = 100  # mouse memory length (in turns)
 MUTATION_PROB = 0.1  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
-GIVE_MIN, GIVE_MAX = 0, 4
+GIVE_MIN, GIVE_MAX = 0, 2
 
 N_ACTIONS = 2  # the length of action lists
 
 type Cheese = Literal["parmesan", "gouda"]
+
+CHEESES: list[Cheese] = ["parmesan", "gouda"]
 
 
 @dataclass
@@ -85,7 +88,7 @@ class MouseMemCell:
 
 
 random_action_pool: list[type[Action]] = [
-    Forage,
+    # Forage,
     ForageSpecialized,
     Deal,
     AnyDeal,
@@ -142,11 +145,15 @@ def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
     There is also a small chance to pick a completely random action list.
     If memory is not completely filled yet, always pick a random action list.
     """
-    if len(memory) < MEM or np.random.rand() < RANDOM_ACTION_PROB:
+    rewards = np.array([cell.reward for cell in memory])
+    if (
+        len(memory) < MEM 
+        or np.random.rand() < RANDOM_ACTION_PROB
+        or rewards.sum() == 0
+    ):
         return [create_random_action() for _ in range(N_ACTIONS)]
 
     # pick an action list from memory
-    rewards = np.array([cell.reward for cell in memory])
     probabilities = rewards / rewards.sum()
     chosen = random.choices(
         [cell.actions for cell in memory],
@@ -196,19 +203,30 @@ def perform_action(
                     deals = match_deals(action, other_mouse_action)
                     if deals is not None:  # not None means a match
                         perform_action(
-                            mouse, deals[0], state, target_mouse=other_mouse
+                            mouse,
+                            deals[0].me,
+                            state,
+                            target_mouse=other_mouse
                         )
                         deals[0].done = True
                         state.actions[mouse][action_idx] = deals[0]
                         perform_action(
-                            other_mouse, deals[1], state, target_mouse=mouse
+                            other_mouse,
+                            deals[0].you,
+                            state,
+                            target_mouse=mouse
                         )
                         deals[1].done = True
                         state.actions[other_mouse][action_idx] = deals[1]
                         break
 
         case Give(items):
-            if target_mouse is not None:  # Give requires a target mouse
+            if (
+                target_mouse is not None  # give requires a target mouse
+                and all(
+                    inventory[cheese] >= items[cheese] for cheese in CHEESES
+                )  # you cannot give what you don't have
+            ):
                 target_mouse_inventory = state.inventories[target_mouse]
                 for cheese, amount in items.items():
                     inventory[cheese] -= amount
@@ -230,6 +248,9 @@ def calculate_reward(inventory: dict[Cheese, int]) -> float:
 
 
 def main() -> None:
+    from plotter import Plotter
+    plotter = Plotter()
+
     memories: list[list[MouseMemCell]] = [[] for _ in range(N)]
 
     for turn in tqdm(range(MAX_TURNS)):
@@ -248,8 +269,10 @@ def main() -> None:
                 perform_action(mouse, action, state, action_idx=i)
 
         # calculate reward
+        rewards = [-1.] * N
         for mouse in range(N):
             reward = calculate_reward(inventories[mouse])
+            rewards[mouse] = reward
 
             # update memory
             memory = memories[mouse]
@@ -257,11 +280,12 @@ def main() -> None:
             if len(memory) > MEM:  # keep memory size constant
                 memory.pop(0)
 
-        print(
-            f"Turn {turn}: "
-            f"{[(mem[-1].actions, mem[-1].reward)
-                for mem in memories if mem]}"
-        )
+        # display results
+        plotter.store(actions, rewards)
+        if turn % 100 == 0:
+            plotter.plot()
+
+    input("Press Enter to close...")
 
 
 if __name__ == "__main__":

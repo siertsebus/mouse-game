@@ -1,3 +1,4 @@
 tqdm
 types-tqdm
 numpy
+matplotlib
