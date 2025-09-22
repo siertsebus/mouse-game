@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import math
 import random
 from typing import Literal, cast
 
@@ -7,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 
 
-N = 100  # number of mice
+N = 20  # number of mice
 MAX_TURNS = 10000
 MEM = 100  # mouse memory length (in turns)
 MUTATION_PROB = 0.1  # probability of mutating an action
@@ -95,9 +94,16 @@ random_action_pool: list[type[Action]] = [
 ]
 
 
-deal_random_action_pool: list[type[Action]] = [
-    Give
-]
+deal_random_action_pool: list[type[Action]] = [Give]
+# ^ keep in sync with random_deal_action and valid_offer
+
+
+def valid_offer(deal: Deal, inventory: dict[Cheese, int]) -> bool:
+    match deal.me:
+        case Give(items):
+            return all(inventory[cheese] >= items.get(cheese, 0) for cheese in CHEESES)
+        case _:
+            return False
 
 
 @dataclass
@@ -115,10 +121,7 @@ def create_random_action() -> Action:
         cheese: Cheese = random.choice(["parmesan", "gouda"])
         return ForageSpecialized(cheese=cheese)
     elif action_type is Deal:
-        return Deal(
-            me=create_random_deal_action(),
-            you=create_random_deal_action()
-        )
+        return Deal(me=create_random_deal_action(), you=create_random_deal_action())
     elif action_type is AnyDeal:
         return AnyDeal()
     else:
@@ -128,14 +131,14 @@ def create_random_action() -> Action:
 def create_random_deal_action() -> Action:
     action_type = random.choice(deal_random_action_pool)
     if action_type is Give:
-        return Give({
-            "parmesan": random.randint(GIVE_MIN, GIVE_MAX),
-            "gouda": random.randint(GIVE_MIN, GIVE_MAX)
-        })
-    else:
-        raise NotImplementedError(
-            f"Deal action type {action_type} not implemented"
+        return Give(
+            {
+                "parmesan": random.randint(GIVE_MIN, GIVE_MAX),
+                "gouda": random.randint(GIVE_MIN, GIVE_MAX),
+            }
         )
+    else:
+        raise NotImplementedError(f"Deal action type {action_type} not implemented")
 
 
 def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
@@ -146,20 +149,18 @@ def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
     If memory is not completely filled yet, always pick a random action list.
     """
     rewards = np.array([cell.reward for cell in memory])
-    if (
-        len(memory) < MEM 
-        or np.random.rand() < RANDOM_ACTION_PROB
-        or rewards.sum() == 0
-    ):
+    if len(memory) < MEM or np.random.rand() < RANDOM_ACTION_PROB or rewards.sum() == 0:
         return [create_random_action() for _ in range(N_ACTIONS)]
 
     # pick an action list from memory
     probabilities = rewards / rewards.sum()
     chosen = random.choices(
-        [cell.actions for cell in memory],
-        weights=probabilities,
-        k=1
+        [cell.actions for cell in memory], weights=probabilities, k=1
     )[0]
+
+    # reset actions
+    for action in chosen:
+        reset_action(action)
 
     # mutate with some probability
     if np.random.rand() < MUTATION_PROB:
@@ -168,6 +169,12 @@ def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
         chosen[mutation_index] = create_random_action()
 
     return chosen
+
+
+def reset_action(action: Action) -> None:
+    match action:
+        case Deal(_, _, done=True):
+            action.done = False  # When doing a memorized action again, reset to undone
 
 
 def perform_action(
@@ -182,8 +189,7 @@ def perform_action(
 
     def contains_forage(actions: list[Action]) -> bool:
         return any(
-            isinstance(a, Forage) or isinstance(a, ForageSpecialized)
-            for a in actions
+            isinstance(a, Forage) or isinstance(a, ForageSpecialized) for a in actions
         )
 
     match action:
@@ -201,32 +207,27 @@ def perform_action(
                 for other_mouse in range(N):
                     other_mouse_action = state.actions[other_mouse][action_idx]
                     deals = match_deals(action, other_mouse_action)
-                    if deals is not None:  # not None means a match
+                    if (
+                        deals is not None  # not None means a match
+                        and valid_offer(deals[0], inventory)
+                        and valid_offer(deals[1], state.inventories[other_mouse])
+                    ):
                         perform_action(
-                            mouse,
-                            deals[0].me,
-                            state,
-                            target_mouse=other_mouse
+                            mouse, deals[0].me, state, target_mouse=other_mouse
                         )
                         deals[0].done = True
                         state.actions[mouse][action_idx] = deals[0]
                         perform_action(
-                            other_mouse,
-                            deals[0].you,
-                            state,
-                            target_mouse=mouse
+                            other_mouse, deals[0].you, state, target_mouse=mouse
                         )
                         deals[1].done = True
                         state.actions[other_mouse][action_idx] = deals[1]
                         break
 
         case Give(items):
-            if (
-                target_mouse is not None  # give requires a target mouse
-                and all(
-                    inventory[cheese] >= items[cheese] for cheese in CHEESES
-                )  # you cannot give what you don't have
-            ):
+            if target_mouse is not None and all(  # give requires a target mouse
+                inventory[cheese] >= items.get(cheese, 0) for cheese in CHEESES
+            ):  # you cannot give what you don't have
                 target_mouse_inventory = state.inventories[target_mouse]
                 for cheese, amount in items.items():
                     inventory[cheese] -= amount
@@ -241,14 +242,12 @@ def calculate_reward(inventory: dict[Cheese, int]) -> float:
     Mice need both parmesan and gouda to be happy.
     More cheese is better, but there are diminishing returns.
     """
-    return min(
-        inventory.get("parmesan", 0),
-        inventory.get("gouda", 0)
-    ) ** 0.5
+    return min(inventory.get("parmesan", 0), inventory.get("gouda", 0)) ** 0.5
 
 
 def main() -> None:
     from plotter import Plotter
+
     plotter = Plotter()
 
     memories: list[list[MouseMemCell]] = [[] for _ in range(N)]
@@ -269,7 +268,7 @@ def main() -> None:
                 perform_action(mouse, action, state, action_idx=i)
 
         # calculate reward
-        rewards = [-1.] * N
+        rewards = [-1.0] * N
         for mouse in range(N):
             reward = calculate_reward(inventories[mouse])
             rewards[mouse] = reward
@@ -284,6 +283,8 @@ def main() -> None:
         plotter.store(actions, rewards)
         if turn % 100 == 0:
             plotter.plot()
+
+        # print([mem[-1].actions for mem in memories])
 
     input("Press Enter to close...")
 
