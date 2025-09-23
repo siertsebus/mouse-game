@@ -6,11 +6,13 @@ import numpy as np
 from tqdm import tqdm
 
 
-N = 20  # number of mice
+N = 50  # number of mice
 MAX_TURNS = 10000
-MEM = 100  # mouse memory length (in turns)
+MEM = 50  # mouse memory length (in turns)
 MUTATION_PROB = 0.1  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
+REWARD_POW = 1  # used to calculate the reward from cheese counts
+GREEDINESS = 4  # used to calculate action probabilities from the reward
 GIVE_MIN, GIVE_MAX = 0, 2
 
 N_ACTIONS = 2  # the length of action lists
@@ -87,7 +89,7 @@ class MouseMemCell:
 
 
 random_action_pool: list[type[Action]] = [
-    # Forage,
+    Forage,
     ForageSpecialized,
     Deal,
     AnyDeal,
@@ -153,7 +155,8 @@ def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
         return [create_random_action() for _ in range(N_ACTIONS)]
 
     # pick an action list from memory
-    probabilities = rewards / rewards.sum()
+    score = rewards**GREEDINESS
+    probabilities = score / score.sum()
     chosen = random.choices(
         [cell.actions for cell in memory], weights=probabilities, k=1
     )[0]
@@ -240,9 +243,9 @@ def perform_action(
 def calculate_reward(inventory: dict[Cheese, int]) -> float:
     """
     Mice need both parmesan and gouda to be happy.
-    More cheese is better, but there are diminishing returns.
+    More cheese is better, but there are diminishing returns (depending on REWARD_POW).
     """
-    return min(inventory.get("parmesan", 0), inventory.get("gouda", 0)) ** 0.5
+    return min(inventory.get("parmesan", 0), inventory.get("gouda", 0)) ** REWARD_POW
 
 
 def main() -> None:
