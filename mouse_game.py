@@ -167,7 +167,7 @@ def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
 
     # mutate with some probability
     if np.random.rand() < MUTATION_PROB:
-        chosen = cast(list[Action], chosen.copy())
+        chosen = chosen.copy()
         mutation_index = np.random.randint(len(chosen))
         chosen[mutation_index] = create_random_action()
 
@@ -178,6 +178,8 @@ def reset_action(action: Action) -> None:
     match action:
         case Deal(_, _, done=True):
             action.done = False  # When doing a memorized action again, reset to undone
+        case _:
+            pass  # Other actions need no reset
 
 
 def perform_action(
@@ -267,7 +269,7 @@ def main() -> None:
         # -> start with first action for all mice, then second action, etc.
         for i in range(N_ACTIONS):
             for mouse in np.random.permutation(N):
-                action = actions[mouse][i]
+                action = cast(Action, actions[mouse][i])
                 perform_action(mouse, action, state, action_idx=i)
 
         # calculate reward
