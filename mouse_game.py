@@ -13,7 +13,7 @@ MUTATION_PROB = 0.1  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
 REWARD_POW = 1  # used to calculate the reward from cheese counts
 GREEDINESS = 4  # used to calculate action probabilities from the reward
-GIVE_MIN, GIVE_MAX = 0, 2
+TRADE_MIN, TRADE_MAX = 0, 2
 
 N_ACTIONS = 2  # the length of action lists
 
@@ -49,7 +49,24 @@ class AnyDeal:
     pass
 
 
-type Action = Forage | ForageSpecialized | Give | Deal | AnyDeal
+@dataclass
+class Trade:
+    pass
+
+
+@dataclass
+class RunFactory:
+    cheese: Cheese
+    pass
+
+
+@dataclass
+class WorkInFactory:
+    pass  # Cheese type can be derived from the factory one works in
+
+
+type ChoiceAction = Forage | ForageSpecialized | AnyDeal | Trade | RunFactory
+type Action = Forage | ForageSpecialized | Give | Deal | AnyDeal | WorkInFactory
 
 
 def flip_deal(deal: Deal) -> Deal:
@@ -88,20 +105,17 @@ class MouseMemCell:
     reward: float
 
 
-random_action_pool: list[type[Action]] = [
+random_action_pool: list[type[ChoiceAction]] = [
     Forage,
     ForageSpecialized,
-    Deal,
     AnyDeal,
+    Trade,
+    # RunFactory,
 ]
 
 
-deal_random_action_pool: list[type[Action]] = [Give]
-# ^ keep in sync with random_deal_action and valid_offer
-
-
 def valid_offer(deal: Deal, inventory: dict[Cheese, int]) -> bool:
-    match deal.me:
+    match deal.me:  # TODO -> do match (deal.me, deal.you) to check factory deals
         case Give(items):
             return all(inventory[cheese] >= items.get(cheese, 0) for cheese in CHEESES)
         case _:
@@ -122,25 +136,25 @@ def create_random_action() -> Action:
     elif action_type is ForageSpecialized:
         cheese: Cheese = random.choice(["parmesan", "gouda"])
         return ForageSpecialized(cheese=cheese)
-    elif action_type is Deal:
-        return Deal(me=create_random_deal_action(), you=create_random_deal_action())
+    elif action_type is Trade:
+        order_options = cast(
+            list[tuple[Cheese, Cheese]],
+            [
+                ["parmesan", "gouda"],
+                ["gouda", "parmesan"],
+            ],
+        )
+        cheeses = random.choice(order_options)
+        return Deal(
+            me=Give({cheeses[0]: random.randint(TRADE_MIN, TRADE_MAX)}),
+            you=Give({cheeses[1]: random.randint(TRADE_MIN, TRADE_MAX)}),
+        )
     elif action_type is AnyDeal:
         return AnyDeal()
+    elif action_type is RunFactory:
+        raise NotImplementedError()  # TODO -> create a Deal with work + salary
     else:
         raise NotImplementedError(f"Action type {action_type} not implemented")
-
-
-def create_random_deal_action() -> Action:
-    action_type = random.choice(deal_random_action_pool)
-    if action_type is Give:
-        return Give(
-            {
-                "parmesan": random.randint(GIVE_MIN, GIVE_MAX),
-                "gouda": random.randint(GIVE_MIN, GIVE_MAX),
-            }
-        )
-    else:
-        raise NotImplementedError(f"Deal action type {action_type} not implemented")
 
 
 def pick_action_list(memory: list[MouseMemCell]) -> list[Action]:
