@@ -7,13 +7,14 @@ from tqdm import tqdm
 
 
 N = 50  # number of mice
-MAX_TURNS = 10000
+MAX_TURNS = 2000
 MEM = 50  # mouse memory length (in turns)
 MUTATION_PROB = 0.1  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
 REWARD_POW = 1  # used to calculate the reward from cheese counts
 GREEDINESS = 4  # used to calculate action probabilities from the reward
 TRADE_MIN, TRADE_MAX = 0, 2
+SALARY_MIN, SALARY_MAX = 0, 8
 
 N_ACTIONS = 2  # the length of action lists
 
@@ -62,7 +63,7 @@ class RunFactory:
 
 @dataclass
 class WorkInFactory:
-    pass  # Cheese type can be derived from the factory one works in
+    cheese: Cheese
 
 
 type ChoiceAction = Forage | ForageSpecialized | AnyDeal | Trade | RunFactory
@@ -110,13 +111,18 @@ random_action_pool: list[type[ChoiceAction]] = [
     ForageSpecialized,
     AnyDeal,
     Trade,
-    # RunFactory,
+    RunFactory,
 ]
 
 
 def valid_offer(deal: Deal, inventory: dict[Cheese, int]) -> bool:
-    match deal.me:  # TODO -> do match (deal.me, deal.you) to check factory deals
-        case Give(items):
+    match (
+        deal.me,
+        deal.you,
+    ):
+        case Deal(Give(items), WorkInFactory(_)), _:
+            return True  # factory deal from factory owner perspective always valid
+        case Give(items), _:
             return all(inventory[cheese] >= items.get(cheese, 0) for cheese in CHEESES)
         case _:
             return False
@@ -152,7 +158,11 @@ def create_random_action() -> Action:
     elif action_type is AnyDeal:
         return AnyDeal()
     elif action_type is RunFactory:
-        raise NotImplementedError()  # TODO -> create a Deal with work + salary
+        cheese = random.choice(["parmesan", "gouda"])
+        return Deal(
+            me=Give({cheese: random.randint(SALARY_MIN, SALARY_MAX)}),
+            you=WorkInFactory(cheese),
+        )
     else:
         raise NotImplementedError(f"Action type {action_type} not implemented")
 
@@ -196,13 +206,19 @@ def reset_action(action: Action) -> None:
             pass  # Other actions need no reset
 
 
+def set_deal_done(deal: Deal) -> None:
+    is_one_to_many = isinstance(deal.you, WorkInFactory)
+    if not is_one_to_many:
+        deal.done = True  # Only set done this is not a one to many deal
+
+
 def perform_action(
     mouse: int,
     action: Action,
     state: TurnState,
     action_idx: int | None = None,
     target_mouse: int | None = None,  # The target for e.g. the Give action
-):
+) -> None:
     inventory = state.inventories[mouse]
     done_actions = state.actions[mouse][:action_idx] if action_idx else []
 
@@ -221,39 +237,52 @@ def perform_action(
             if not contains_forage(done_actions):  # forage only once per turn
                 inventory[cheese] += 4
 
-        case Deal(_, _, done=False) | AnyDeal():
-            if action_idx is not None:  # Deal requires an action_idx
-                for other_mouse in range(N):
-                    other_mouse_action = state.actions[other_mouse][action_idx]
-                    deals = match_deals(action, other_mouse_action)
-                    if (
-                        deals is not None  # not None means a match
-                        and valid_offer(deals[0], inventory)
-                        and valid_offer(deals[1], state.inventories[other_mouse])
-                    ):
-                        perform_action(
-                            mouse, deals[0].me, state, target_mouse=other_mouse
-                        )
-                        deals[0].done = True
-                        state.actions[mouse][action_idx] = deals[0]
-                        perform_action(
-                            other_mouse, deals[0].you, state, target_mouse=mouse
-                        )
-                        deals[1].done = True
-                        state.actions[other_mouse][action_idx] = deals[1]
-                        break
+        case AnyDeal() if action_idx is not None:
+            perform_deal(mouse, inventory, action, state, action_idx)
 
-        case Give(items):
-            if target_mouse is not None and all(  # give requires a target mouse
-                inventory[cheese] >= items.get(cheese, 0) for cheese in CHEESES
-            ):  # you cannot give what you don't have
-                target_mouse_inventory = state.inventories[target_mouse]
-                for cheese, amount in items.items():
-                    inventory[cheese] -= amount
-                    target_mouse_inventory[cheese] += amount
+        case Deal(_, you, done=False) if action_idx is not None and not isinstance(
+            you, WorkInFactory  # deal should be performed from perspective of worker
+        ):
+            perform_deal(mouse, inventory, action, state, action_idx)
+
+        case Give(items) if target_mouse is not None and all(  # give requires a target
+            inventory[cheese] >= items.get(cheese, 0) for cheese in CHEESES
+        ):  # you cannot give what you don't have
+            target_mouse_inventory = state.inventories[target_mouse]
+            for cheese, amount in items.items():
+                inventory[cheese] -= amount
+                target_mouse_inventory[cheese] += amount
+
+        case WorkInFactory(cheese) if target_mouse:
+            target_mouse_inventory = state.inventories[target_mouse]
+            target_mouse_inventory[cheese] += 8
 
         case _:
             pass  # Do nothing
+
+
+def perform_deal(
+    mouse: int,
+    inventory: dict[Cheese, int],
+    deal: Action,
+    state: TurnState,
+    action_idx: int,
+) -> None:
+    for other_mouse in range(N):
+        other_mouse_action = state.actions[other_mouse][action_idx]
+        deals = match_deals(deal, other_mouse_action)
+        if (
+            deals is not None  # not None means a match
+            and valid_offer(deals[0], inventory)
+            and valid_offer(deals[1], state.inventories[other_mouse])
+        ):
+            perform_action(mouse, deals[0].me, state, target_mouse=other_mouse)
+            set_deal_done(deals[0])
+            state.actions[mouse][action_idx] = deals[0]
+            perform_action(other_mouse, deals[0].you, state, target_mouse=mouse)
+            set_deal_done(deals[1])
+            state.actions[other_mouse][action_idx] = deals[1]
+            break
 
 
 def calculate_reward(inventory: dict[Cheese, int]) -> float:

@@ -2,11 +2,34 @@ import matplotlib.pyplot as plt
 
 # from collections import Counter
 
-from mouse_game import Action, AnyDeal, Deal, Forage, ForageSpecialized, Give
+from mouse_game import Action, Deal
 
 
-PLOT_ACTIONS: list[type[Action]] = [Forage, ForageSpecialized, Give, Deal, AnyDeal]
+PLOT_ACTIONS: list[str] = [
+    "Forage",
+    "ForageSpecialized",
+    "Deal(Give->Give)",
+    "Deal(Give->WorkInFactory)",
+    "Deal(WorkInFactory->Give)",
+    "AnyDeal",
+]
 MOVING_AVG_WINDOW = 50
+
+
+def action_tag(action: Action) -> str:
+    if isinstance(action, Deal):
+        print("BBBBBBBBBBBBBBB")
+        return f"Deal({action_tag(action.me)}->{action_tag(action.you)})"
+    
+    match action:
+        case Deal():
+            print("AAAAAAAAAAAAAAA")
+            # print(f"Deal({action_tag(you)}->{action_tag(me)})")
+            # return f"Deal({action_tag(you)}->{action_tag(me)})"
+            return "fish"
+        case _:
+            print("CCCCCCCCCCCCCCCC", type(action), action)
+            return type(action).__name__
 
 
 class Plotter:
@@ -14,11 +37,9 @@ class Plotter:
         self.fig, (self.ax1, self.ax2) = plt.subplots(1, 2, figsize=(12, 5))
         plt.ion()  # Turn on interactive mode
 
-        self.past_action_counts: dict[str, list[int]] = {
-            a.__name__: [] for a in PLOT_ACTIONS
-        }
+        self.past_action_counts: dict[str, list[int]] = {a: [] for a in PLOT_ACTIONS}
         self.past_action_counts_mavg: dict[str, list[float]] = {
-            a.__name__: [] for a in PLOT_ACTIONS
+            a: [] for a in PLOT_ACTIONS
         }
         self.past_avg_rewards: list[float] = []
         self.past_avg_rewards_mavg: list[float] = []
@@ -28,11 +49,11 @@ class Plotter:
         window = min(MOVING_AVG_WINDOW, len(self.past_avg_rewards))
         self.past_avg_rewards_mavg.append(sum(self.past_avg_rewards[-window:]) / window)
 
-        action_counts = {a.__name__: 0 for a in PLOT_ACTIONS}
+        action_counts = {a: 0 for a in PLOT_ACTIONS}
         for action_list in actions:
             for a in action_list:
-                if type(a).__name__ in action_counts:
-                    action_counts[type(a).__name__] += 1
+                if action_tag(a) in action_counts:
+                    action_counts[action_tag(a)] += 1
 
         for a_type, count in action_counts.items():
             self.past_action_counts[a_type].append(count)
