@@ -1,13 +1,29 @@
 from dataclasses import dataclass
 import random
-from typing import Literal, cast
+from typing import cast
+from data import (
+    CHEESES,
+    Action,
+    AnyDeal,
+    Cheese,
+    ChoiceAction,
+    Deal,
+    Forage,
+    ForageSpecialized,
+    Give,
+    RunFactory,
+    Trade,
+    WorkInFactory,
+    flip_deal,
+)
+from plotter import Plotter
 
 import numpy as np
 from tqdm import tqdm
 
 
 N = 50  # number of mice
-MAX_TURNS = 2000
+MAX_TURNS = 5000
 MEM = 50  # mouse memory length (in turns)
 MUTATION_PROB = 0.1  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
@@ -17,61 +33,6 @@ TRADE_MIN, TRADE_MAX = 0, 2
 SALARY_MIN, SALARY_MAX = 0, 8
 
 N_ACTIONS = 2  # the length of action lists
-
-type Cheese = Literal["parmesan", "gouda"]
-
-CHEESES: list[Cheese] = ["parmesan", "gouda"]
-
-
-@dataclass
-class Forage:
-    pass
-
-
-@dataclass
-class ForageSpecialized:
-    cheese: Cheese
-
-
-@dataclass
-class Give:
-    items: dict[Cheese, int]
-
-
-@dataclass
-class Deal:
-    me: "Action"
-    you: "Action"
-    done: bool = False
-
-
-@dataclass
-class AnyDeal:
-    pass
-
-
-@dataclass
-class Trade:
-    pass
-
-
-@dataclass
-class RunFactory:
-    cheese: Cheese
-    pass
-
-
-@dataclass
-class WorkInFactory:
-    cheese: Cheese
-
-
-type ChoiceAction = Forage | ForageSpecialized | AnyDeal | Trade | RunFactory
-type Action = Forage | ForageSpecialized | Give | Deal | AnyDeal | WorkInFactory
-
-
-def flip_deal(deal: Deal) -> Deal:
-    return Deal(me=deal.you, you=deal.me, done=deal.done)
 
 
 def match_deals(a1: Action, a2: Action) -> tuple[Deal, Deal] | None:
@@ -294,8 +255,6 @@ def calculate_reward(inventory: dict[Cheese, int]) -> float:
 
 
 def main() -> None:
-    from plotter import Plotter
-
     plotter = Plotter()
 
     memories: list[list[MouseMemCell]] = [[] for _ in range(N)]

@@ -1,8 +1,6 @@
 import matplotlib.pyplot as plt
 
-# from collections import Counter
-
-from mouse_game import Action, Deal
+from data import Action, Deal
 
 
 PLOT_ACTIONS: list[str] = [
@@ -17,18 +15,11 @@ MOVING_AVG_WINDOW = 50
 
 
 def action_tag(action: Action) -> str:
-    if isinstance(action, Deal):
-        print("BBBBBBBBBBBBBBB")
-        return f"Deal({action_tag(action.me)}->{action_tag(action.you)})"
-    
+
     match action:
-        case Deal():
-            print("AAAAAAAAAAAAAAA")
-            # print(f"Deal({action_tag(you)}->{action_tag(me)})")
-            # return f"Deal({action_tag(you)}->{action_tag(me)})"
-            return "fish"
+        case Deal(me, you, _):
+            return f"Deal({action_tag(me)}->{action_tag(you)})"
         case _:
-            print("CCCCCCCCCCCCCCCC", type(action), action)
             return type(action).__name__
 
 
