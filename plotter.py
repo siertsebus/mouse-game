@@ -24,7 +24,7 @@ def action_tag(action: Action) -> str:
 
 class Plotter:
     def __init__(self) -> None:
-        self.fig, (self.ax1, self.ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(1, 3, figsize=(18, 5))
         plt.ion()  # Turn on interactive mode
 
         self.past_action_counts: dict[str, list[int]] = {a: [] for a in PLOT_ACTIONS}
@@ -33,12 +33,18 @@ class Plotter:
         }
         self.past_avg_rewards: list[float] = []
         self.past_avg_rewards_mavg: list[float] = []
+        self.past_avg_salaries: list[float] = []
+        self.past_avg_salaries_mavg: list[float] = []
 
-    def store(self, actions: list[list["Action"]], rewards: list[float]) -> None:
+    def store(
+        self, actions: list[list["Action"]], rewards: list[float], salaries: list[int]
+    ) -> None:
+        # Store average reward
         self.past_avg_rewards.append(sum(rewards) / len(rewards))
         window = min(MOVING_AVG_WINDOW, len(self.past_avg_rewards))
         self.past_avg_rewards_mavg.append(sum(self.past_avg_rewards[-window:]) / window)
 
+        # Store action counts
         action_counts = {a: 0 for a in PLOT_ACTIONS}
         for action_list in actions:
             for a in action_list:
@@ -51,13 +57,22 @@ class Plotter:
                 sum(self.past_action_counts[a_type][-window:]) / window
             )
 
+        # Store average salary
+        avg_salary = sum(salaries) / len(salaries) if salaries else 0.0
+        self.past_avg_salaries.append(avg_salary)
+        window = min(MOVING_AVG_WINDOW, len(self.past_avg_salaries))
+        self.past_avg_salaries_mavg.append(
+            sum(self.past_avg_salaries[-window:]) / window
+        )
+
     def plot(self) -> None:
 
-        ax1, ax2 = self.ax1, self.ax2
+        ax1, ax2, ax3 = self.ax1, self.ax2, self.ax3
 
         # Clear the axes
         ax1.clear()
         ax2.clear()
+        ax3.clear()
 
         # Plot 1: Average reward over iterations
         iterations = list(range(1, len(self.past_avg_rewards) + 1))
@@ -66,9 +81,6 @@ class Plotter:
             iterations,
             self.past_avg_rewards_mavg,
             "b-",
-            linewidth=2,
-            marker="o",
-            markersize=4,
         )
         ax1.set_xlabel("Iteration")
         ax1.set_ylabel("Average Reward")
@@ -82,6 +94,17 @@ class Plotter:
         ax2.set_ylabel("Action Counts")
         ax2.set_title("Action Popularity Over Time")
         ax2.legend()
+
+        # Plot 3: Average salary over iterations
+        ax3.plot(
+            iterations,
+            self.past_avg_salaries_mavg,
+            "g-",
+        )
+        ax3.set_xlabel("Iteration")
+        ax3.set_ylabel("Average Salary")
+        ax3.set_title("Average Salary Over Time")
+        ax3.grid(True, alpha=0.3)
 
         # Adjust layout and refresh
         plt.tight_layout()

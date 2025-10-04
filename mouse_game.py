@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import random
 from typing import cast
 from data import (
@@ -23,13 +23,13 @@ from tqdm import tqdm
 
 
 N = 50  # number of mice
-MAX_TURNS = 5000
+MAX_TURNS = 30000
 MEM = 50  # mouse memory length (in turns)
-MUTATION_PROB = 0.1  # probability of mutating an action
+MUTATION_PROB = 0.2  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
 REWARD_POW = 1  # used to calculate the reward from cheese counts
 GREEDINESS = 4  # used to calculate action probabilities from the reward
-TRADE_MIN, TRADE_MAX = 1, 4
+TRADE_MIN, TRADE_MAX = 1, 8
 SALARY_MIN, SALARY_MAX = 4, 15
 
 N_ACTIONS = 2  # the length of action lists
@@ -96,6 +96,7 @@ class TurnState:
     memories: list[list[MouseMemCell]]
     actions: list[list[Action]]
     inventories: list[dict[Cheese, int]]
+    salaries: list[int] = field(default_factory=list[int])
 
 
 def create_random_action() -> Action:
@@ -239,6 +240,10 @@ def perform_deal(
             and valid_offer(deals[0], inventory)
             and valid_offer(deals[1], state.inventories[other_mouse])
         ):
+            # Record salary if this is a factory deal
+            if isinstance(deals[0].me, WorkInFactory):
+                state.salaries.append(sum(cast(Give, deals[0].you).items.values()))
+
             perform_action(mouse, deals[0].me, state, target_mouse=other_mouse)
             set_deal_done(deals[0])
             state.actions[mouse][action_idx] = deals[0]
@@ -289,7 +294,7 @@ def main() -> None:
                 memory.pop(0)
 
         # display results
-        plotter.store(actions, rewards)
+        plotter.store(actions, rewards, state.salaries)
         if turn % 100 == 0:
             plotter.plot()
 
