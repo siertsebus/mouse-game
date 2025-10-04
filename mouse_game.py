@@ -29,8 +29,8 @@ MUTATION_PROB = 0.1  # probability of mutating an action
 RANDOM_ACTION_PROB = 0.1  # probability of picking a random action
 REWARD_POW = 1  # used to calculate the reward from cheese counts
 GREEDINESS = 4  # used to calculate action probabilities from the reward
-TRADE_MIN, TRADE_MAX = 0, 2
-SALARY_MIN, SALARY_MAX = 0, 8
+TRADE_MIN, TRADE_MAX = 1, 4
+SALARY_MIN, SALARY_MAX = 4, 15
 
 N_ACTIONS = 2  # the length of action lists
 
@@ -81,10 +81,12 @@ def valid_offer(deal: Deal, inventory: dict[Cheese, int]) -> bool:
         deal.me,
         deal.you,
     ):
-        case Deal(Give(items), WorkInFactory(_)), _:
+        case Give(items), WorkInFactory(_):
             return True  # factory deal from factory owner perspective always valid
         case Give(items), _:
             return all(inventory[cheese] >= items.get(cheese, 0) for cheese in CHEESES)
+        case WorkInFactory(_), _:
+            return True
         case _:
             return False
 
@@ -216,7 +218,7 @@ def perform_action(
 
         case WorkInFactory(cheese) if target_mouse:
             target_mouse_inventory = state.inventories[target_mouse]
-            target_mouse_inventory[cheese] += 8
+            target_mouse_inventory[cheese] += 16
 
         case _:
             pass  # Do nothing

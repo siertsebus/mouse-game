@@ -9,7 +9,6 @@ PLOT_ACTIONS: list[str] = [
     "Deal(Give->Give)",
     "Deal(Give->WorkInFactory)",
     "Deal(WorkInFactory->Give)",
-    "AnyDeal",
 ]
 MOVING_AVG_WINDOW = 50
 
